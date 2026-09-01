@@ -12,12 +12,40 @@ from ingrammicro_mcp.config import Settings
 from ingrammicro_mcp.server import create_mcp_server
 
 # name -> (required params, expected annotation hint set to True)
+_RO = {"readOnlyHint", "idempotentHint"}
 EXPECTED_TOOLS = {
+    # orders
     "ingrammicro_create_order": ({"customer_order_number", "lines"}, {"destructiveHint"}),
     "ingrammicro_create_cloud_order": (set(), {"destructiveHint"}),
     "ingrammicro_modify_order": ({"order_number"}, {"idempotentHint"}),
     "ingrammicro_cancel_order": ({"order_number"}, {"destructiveHint", "idempotentHint"}),
-    "ingrammicro_validate_quote_to_order": ({"quote_number"}, {"readOnlyHint", "idempotentHint"}),
+    "ingrammicro_get_order": ({"order_number"}, _RO),
+    "ingrammicro_search_orders": (set(), _RO),
+    # quotes
+    "ingrammicro_search_quotes": ({"requester_email"}, _RO),
+    "ingrammicro_get_quote": ({"quote_number"}, _RO),
+    "ingrammicro_create_quote": ({"requester_email", "products"}, set()),
+    "ingrammicro_validate_quote_to_order": ({"quote_number"}, _RO),
+    # catalog
+    "ingrammicro_search_products": (set(), _RO),
+    "ingrammicro_get_product_detail": ({"ingram_part_number"}, _RO),
+    "ingrammicro_get_product_detail_by_reference": (set(), _RO),
+    "ingrammicro_get_price_and_availability": ({"products"}, _RO),
+    # invoices
+    "ingrammicro_search_invoices": (set(), _RO),
+    "ingrammicro_get_invoice": ({"invoice_number"}, _RO),
+    # renewals
+    "ingrammicro_search_renewals": (set(), _RO),
+    "ingrammicro_get_renewal": ({"renewal_id"}, _RO),
+    # deals
+    "ingrammicro_search_deals": (set(), _RO),
+    "ingrammicro_get_deal": ({"deal_id"}, _RO),
+    # returns
+    "ingrammicro_search_returns": (set(), _RO),
+    "ingrammicro_get_return": ({"case_request_number"}, _RO),
+    "ingrammicro_create_return": ({"returns"}, {"destructiveHint"}),
+    # freight
+    "ingrammicro_get_freight_estimate": ({"requester_email", "lines"}, _RO),
 }
 
 # Tools whose docstrings deliberately exceed the SOP's 500-char description

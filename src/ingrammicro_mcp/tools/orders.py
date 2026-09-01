@@ -1,6 +1,4 @@
-"""Order placement/modification tools — the purchasing gap Ingram Micro's
-own official MCP Server doesn't cover (that one is query-only: catalog,
-pricing, quotes, invoices, returns, renewals, freight estimate).
+"""Order placement, modification, and lookup tools.
 
 Verified against Ingram Micro's own published OpenAPI spec
 (github.com/ingrammicro-xvantage/xi-sdk-openapispec,
@@ -353,27 +351,77 @@ def register(mcp: FastMCP, client_factory: Callable[[], IngramMicroClient | None
             return e.to_envelope()
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
-    async def ingrammicro_validate_quote_to_order(
-        quote_number: Annotated[
-            str, Field(description='Ingram Micro quote number, e.g. "QUO-14551943-D2Y9L9".')
+    async def ingrammicro_get_order(
+        order_number: Annotated[
+            str, Field(description='Ingram Micro\'s own sales order number, e.g. "20-RD3QV".')
         ],
+        vendor_number: Annotated[str | None, Field(description="Filter/scope by vendor number.")] = None,
     ) -> str:
-        """Validate a quote before converting it to an order, and learn
-        which fields the vendor requires at header and line level for the
-        Quote-to-Order call.
-
-        Always call this before ingrammicro_create_cloud_order(quote_number=...)
-        — the response's vmfAdditionalAttributes (header level) and each
-        line's vmfAdditionalAttributesLines name the exact vendor-mandatory
-        fields to copy into that call's additional_attributes.
+        """Get full status/line detail for one order — shipping status,
+        tracking, per-line fulfillment. Use ingrammicro_search_orders
+        instead if you don't already have the exact order number.
         """
         client = client_factory()
         if client is None:
             return NO_TOKEN
         try:
             result = await client.get(
-                "/resellers/v6/q2o/validatequote", params={"quoteNumber": quote_number}
+                f"/resellers/v6.1/orders/{order_number}", params={"vendorNumber": vendor_number}
             )
+            return dump_json_capped(result)
+        except IngramMicroError as e:
+            return e.to_envelope()
+
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
+    async def ingrammicro_search_orders(
+        customer_order_number: Annotated[
+            str | None, Field(description="Your own PO/order number for the order.")
+        ] = None,
+        ingram_order_number: Annotated[str | None, Field(description="Ingram Micro's order number.")] = None,
+        order_status: Annotated[
+            str | None,
+            Field(description='One of "SHIPPED", "PROCESSING", "ON HOLD", "BACKORDERED", "CANCELLED".'),
+        ] = None,
+        order_date: Annotated[str | None, Field(description="Order date, YYYY-MM-DD.")] = None,
+        end_customer_order_number: Annotated[
+            str | None, Field(description="The end customer's own PO number.")
+        ] = None,
+        ingram_part_number: Annotated[str | None, Field(description="Ingram Micro SKU on the order.")] = None,
+        vendor_part_number: Annotated[str | None, Field(description="Vendor's SKU on the order.")] = None,
+        vendor_name: Annotated[str | None, Field(description="Vendor/manufacturer name.")] = None,
+        serial_number: Annotated[str | None, Field(description="Product serial number.")] = None,
+        tracking_number: Annotated[
+            str | None, Field(description="Shipment tracking number (not available in Australia).")
+        ] = None,
+        special_bid_number: Annotated[str | None, Field(description="Special-pricing bid number.")] = None,
+        page_number: Annotated[int | None, Field(description="Page number, default 1.")] = None,
+        page_size: Annotated[int | None, Field(description="Records per page, max 100, default 25.")] = None,
+    ) -> str:
+        """Search past/current orders by PO number, status, product, or
+        date. Use this to find the exact order number before calling
+        ingrammicro_get_order, ingrammicro_modify_order, or
+        ingrammicro_cancel_order.
+        """
+        client = client_factory()
+        if client is None:
+            return NO_TOKEN
+        params = {
+            "customerOrderNumber": customer_order_number,
+            "ingramOrderNumber": ingram_order_number,
+            "orderStatus": order_status,
+            "ingramOrderDate": order_date,
+            "endCustomerOrderNumber": end_customer_order_number,
+            "ingramPartNumber": ingram_part_number,
+            "vendorPartNumber": vendor_part_number,
+            "vendorName": vendor_name,
+            "serialNumber": serial_number,
+            "trackingNumber": tracking_number,
+            "specialBidNumber": special_bid_number,
+            "pageNumber": page_number,
+            "pageSize": page_size,
+        }
+        try:
+            result = await client.get("/resellers/v6/orders/search", params=params)
             return dump_json_capped(result)
         except IngramMicroError as e:
             return e.to_envelope()

@@ -129,10 +129,12 @@ async def _request_with_retry(
 
 
 class IngramMicroClient:
-    """Async httpx client wrapping the Ingram Micro Reseller API (Orders /
-    Quote-to-Order surface), verified against Ingram Micro's own published
-    OpenAPI spec (github.com/ingrammicro-xvantage/xi-sdk-openapispec,
-    checked 2026-09-01).
+    """Async httpx client wrapping the full non-webhook surface of the
+    Ingram Micro Reseller API (Orders, Quote-to-Order, Catalog, Quotes,
+    Invoices, Renewals, Deals, Returns, Freight Estimate), verified against
+    Ingram Micro's own published OpenAPI spec
+    (github.com/ingrammicro-xvantage/xi-sdk-openapispec, checked
+    2026-09-01).
 
     Auth: OAuth2 client_credentials grant, but via `GET /oauth/oauth20/token`
     with client_id/client_secret as QUERY parameters (not the more common
@@ -182,7 +184,7 @@ class IngramMicroClient:
         _raise_for_status(resp)
         return resp.json()["access_token"]
 
-    def _business_headers(self, token: str) -> dict[str, str]:
+    def _business_headers(self, token: str, extra: dict[str, str] | None = None) -> dict[str, str]:
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -194,7 +196,15 @@ class IngramMicroClient:
             "IM-CorrelationID": str(uuid.uuid4()),
         }
         if self._sender_id:
+            # Ingram's own spec is inconsistent about the header name for
+            # "who is calling": most endpoints document IM-SenderID, but
+            # Invoices/Deals-details document IM-ApplicationID with an
+            # identical description. Sending both is harmless and avoids
+            # guessing which name a given endpoint actually validates.
             headers["IM-SenderID"] = self._sender_id
+            headers["IM-ApplicationID"] = self._sender_id
+        if extra:
+            headers.update(extra)
         return headers
 
     def _clean_params(self, params: dict | None) -> dict:
@@ -202,22 +212,31 @@ class IngramMicroClient:
             return {}
         return {k: v for k, v in params.items() if v is not None}
 
-    async def get(self, path: str, params: dict | None = None) -> Any:
+    async def get(
+        self, path: str, params: dict | None = None, extra_headers: dict[str, str] | None = None
+    ) -> Any:
         token = await self._login()
         resp = await _request_with_retry(
             "GET",
             f"{self._base_url}{path}",
-            headers=self._business_headers(token),
+            headers=self._business_headers(token, extra_headers),
             params=self._clean_params(params),
         )
         return self._handle(resp)
 
-    async def post(self, path: str, json_body: Any = None) -> Any:
+    async def post(
+        self,
+        path: str,
+        json_body: Any = None,
+        params: dict | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> Any:
         token = await self._login()
         resp = await _request_with_retry(
             "POST",
             f"{self._base_url}{path}",
-            headers=self._business_headers(token),
+            headers=self._business_headers(token, extra_headers),
+            params=self._clean_params(params),
             json_body=json_body,
         )
         return self._handle(resp)

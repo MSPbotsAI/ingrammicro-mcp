@@ -112,17 +112,17 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         instructions=(
             "Ingram Micro is a technology distributor — resellers buy hardware, "
             "software licenses, and cloud subscriptions through it to fulfill "
-            "their own customers' orders. This server wraps Ingram Micro's "
-            "Reseller purchasing API and covers ONLY what Ingram Micro's own "
-            "official MCP Server does not: placing, changing, and canceling "
-            "real purchase orders. For everything else — product/pricing "
-            "search, quotes, invoices, returns, renewals, freight estimates — "
-            "use Ingram Micro's own MCP Server instead; this one will 404/"
-            "error on those. Tool groups: ingrammicro_create_order (stocked/"
-            "direct-ship/licensing/warranty SKUs) and "
-            "ingrammicro_create_cloud_order (cloud subscriptions, Quote-to-"
-            "Order, Configure-to-Order — validate the quote first with "
-            "ingrammicro_validate_quote_to_order); ingrammicro_modify_order/"
+            "their own customers' orders. This server wraps the full non-"
+            "webhook Ingram Micro Reseller API: product catalog/pricing, "
+            "quotes, order placement/change/cancel/lookup, invoices, "
+            "renewals, special-pricing deals, returns, and freight "
+            "estimates — the single connector for Ingram Micro, no separate "
+            "connector needed. Typical flow: ingrammicro_search_products -> "
+            "ingrammicro_get_price_and_availability -> "
+            "ingrammicro_create_order (stocked/direct-ship/licensing/warranty "
+            "SKUs) or ingrammicro_create_cloud_order (cloud subscriptions, "
+            "Quote-to-Order/Configure-to-Order — validate first with "
+            "ingrammicro_validate_quote_to_order). ingrammicro_modify_order/"
             "ingrammicro_cancel_order only work in a narrow window before "
             "Ingram releases the order to its warehouse. Every order-"
             "placing/modifying call is real spend against the reseller's "
@@ -143,8 +143,15 @@ def create_mcp_server(settings: Settings) -> FastMCP:
             file=sys.stderr,
         )
 
-    from .tools import orders
+    from .tools import catalog, deals, freight, invoices, orders, quotes, renewals, returns
 
+    catalog.register(mcp, client_factory)
     orders.register(mcp, client_factory)
+    quotes.register(mcp, client_factory)
+    invoices.register(mcp, client_factory)
+    renewals.register(mcp, client_factory)
+    deals.register(mcp, client_factory)
+    returns.register(mcp, client_factory)
+    freight.register(mcp, client_factory)
 
     return mcp

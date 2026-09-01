@@ -1,32 +1,32 @@
 # ingrammicro-mcp
 
-MCP server for the **Ingram Micro Reseller purchasing lifecycle** — a
-stateless HTTP MCP service wrapping the parts of Ingram Micro's Reseller
-API that its own official MCP Server does **not** expose: placing,
-changing, and canceling real purchase orders.
+MCP server for the **entire Ingram Micro Reseller purchasing lifecycle** —
+a stateless HTTP MCP service wrapping the full non-webhook surface of
+Ingram Micro's Reseller REST API: product catalog/pricing, quotes, order
+placement/change/cancel/lookup, invoices, renewals, special-pricing deals,
+returns, and freight estimates.
 
 **Tech stack:** Python 3.12 + uv + FastMCP (Starlette/Uvicorn)
 
 ## Why this exists instead of just using Ingram Micro's own MCP Server
 
-Ingram Micro publishes its own official, remote-hosted MCP Server
+Ingram Micro also publishes its own official, remote-hosted MCP Server
 (`developer.ingrammicro.com/reseller/mcp-server`). Verified directly
 against that page's own content (2026-09-01): it is **query-only** —
 product/pricing search, quotes, invoices, returns, renewals, subscriptions,
 and freight estimate. It never mentions "Create Order" or "Place Order"
-anywhere. The traditional Reseller REST API, by contrast, has a complete
-order lifecycle (Create/Modify/Cancel Order, Quote-to-Order). This server
-exists purely to fill that specific gap — it is meant to run **alongside**
-Ingram Micro's own MCP Server, not instead of it:
+anywhere, so it cannot place a purchase order.
 
-| Need | Use |
-|---|---|
-| Search products, check price/availability, look up a quote, check an invoice, estimate freight | Ingram Micro's own official MCP Server |
-| **Place, change, or cancel a real order**; validate a quote before converting it | **This server** |
-
-Tool names use the `ingrammicro_` prefix and don't collide with the
-official server's own tool names, so both can be connected to the same
-agent at once without ambiguity.
+Rather than deploying two separate Ingram Micro connectors (their query-
+only MCP plus a second one just for ordering — which would mean
+provisioning two separate sets of credentials for the same vendor, and
+the agent having to pick between two connectors for overlapping
+capability), this server reimplements the official MCP's query
+capabilities itself, directly against the same underlying Reseller REST
+API, and adds the order-placement/change/cancel capability the official
+one lacks. **One connector, one set of credentials, full coverage** —
+this server is meant to fully replace Ingram Micro's own MCP Server for
+MSPbots' purposes, not run alongside it.
 
 ## Authentication
 
@@ -111,10 +111,31 @@ No credentials are required for the health endpoint.
 
 ## Tool List
 
-Every order-placing/modifying tool spends real money against the
+24 tools, covering every non-webhook endpoint in Ingram Micro's Resellers
+API. Every order-placing/modifying tool spends real money against the
 reseller's Ingram Micro net-terms account — **Ingram Micro does not
 support credit-card API ordering**, only net-terms trade credit, so a
 mistaken order is a real invoice, not a rejected charge.
+
+### Catalog（对应官方MCP：Product Info & Pricing）
+
+| Tool | 功能 | 方法+路径 |
+|---|---|---|
+| `ingrammicro_search_products` | 按关键词/厂商/分类搜索产品目录 | GET /resellers/v6/catalog |
+| `ingrammicro_get_product_detail` | 按Ingram Part Number查产品详情 | GET /resellers/v6/catalog/details/{ingramPartNumber} |
+| `ingrammicro_get_product_detail_by_reference` | 按厂商料号/订阅计划id或名查产品详情 | GET /resellers/v6/catalog/details |
+| `ingrammicro_get_price_and_availability` | 查实时价格与库存 | POST /resellers/v6/catalog/priceandavailability |
+
+### Quotes（对应官方MCP：Quotes）
+
+| Tool | 功能 | 方法+路径 |
+|---|---|---|
+| `ingrammicro_search_quotes` | 搜索报价单 | GET /resellers/v6/quotes/search |
+| `ingrammicro_get_quote` | 查报价单详情 | GET /resellers/v6/quotes/{quoteNumber} |
+| `ingrammicro_create_quote` | 创建报价单（占价，不是下单） | POST /resellers/v6/quotes/create |
+| `ingrammicro_validate_quote_to_order` | 转单前校验报价，返回必填字段 | GET /resellers/v6/q2o/validatequote |
+
+### Orders（对应官方MCP：Orders，但官方只读；下单/改单/取消是官方没有的能力）
 
 | Tool | 功能 | 方法+路径 | 主要参数 |
 |---|---|---|---|
@@ -122,9 +143,47 @@ mistaken order is a real invoice, not a rejected charge.
 | `ingrammicro_create_cloud_order` | 下单：云订阅 / Quote-to-Order / Configure-to-Order（异步，结果通过webhook推送，不在本次响应里） | POST /resellers/v7/orders | `quote_number` 或 `lines` 二选一(必须给一个) |
 | `ingrammicro_modify_order` | 改单：仅限带customer-hold标记、下单后24小时内的订单 | PUT /resellers/v6/orders/{orderNumber} | `order_number`(必填), `action_code`(如"release"), `lines`(ADD/UPDATE/DELETE) |
 | `ingrammicro_cancel_order` | 取消订单：仅限尚未放行到仓库前 | DELETE /resellers/v6/orders/{OrderNumber} | `order_number`(必填) |
-| `ingrammicro_validate_quote_to_order` | 转单前校验报价，返回厂商在header/line级别要求的必填字段 | GET /resellers/v6/q2o/validatequote | `quote_number`(必填) |
+| `ingrammicro_get_order` | 查单个订单详情/物流状态 | GET /resellers/v6.1/orders/{ordernumber} |
+| `ingrammicro_search_orders` | 按PO号/状态/产品搜索订单 | GET /resellers/v6/orders/search |
 
-`ingrammicro_create_order`/`ingrammicro_create_cloud_order`/`ingrammicro_modify_order` 的复杂嵌套参数（`lines`/`ship_to_info`/`end_user_info`/`reseller_info`/`shipment_details`/`additional_attributes`）以 `dict`/`list[dict]` 形式传入，具体字段见每个工具自己的参数说明（已对照官方 OpenAPI spec 核实字段名）。
+### Invoices（对应官方MCP：Invoices）
+
+| Tool | 功能 | 方法+路径 |
+|---|---|---|
+| `ingrammicro_search_invoices` | 搜索发票 | GET /resellers/v6/invoices |
+| `ingrammicro_get_invoice` | 查发票详情 | GET /resellers/v6.1/invoices/{invoiceNumber} |
+
+### Renewals（对应官方MCP：Subscriptions/Renewals）
+
+| Tool | 功能 | 方法+路径 |
+|---|---|---|
+| `ingrammicro_search_renewals` | 搜索续订机会 | POST /resellers/v6/renewals/search |
+| `ingrammicro_get_renewal` | 查续订详情 | GET /resellers/v6/renewals/{renewalId} |
+
+### Deals（特价/Special Bid，官方MCP未单独列出，但同属查询类能力）
+
+| Tool | 功能 | 方法+路径 |
+|---|---|---|
+| `ingrammicro_search_deals` | 搜索特价/Special Bid | GET /resellers/v6/deals/search |
+| `ingrammicro_get_deal` | 查特价详情 | GET /resellers/v6/deals/{dealId} |
+
+### Returns（对应官方MCP：Returns）
+
+| Tool | 功能 | 方法+路径 |
+|---|---|---|
+| `ingrammicro_search_returns` | 搜索退货(RMA)申请 | GET /resellers/v6/returns/search |
+| `ingrammicro_get_return` | 查退货详情 | GET /resellers/v6/returns/{caseRequestNumber} |
+| `ingrammicro_create_return` | 提交退货申请 | POST /resellers/v6/returns/create |
+
+### Freight（对应官方MCP：Freight & Shipping）
+
+| Tool | 功能 | 方法+路径 |
+|---|---|---|
+| `ingrammicro_get_freight_estimate` | 运费预估 | POST /resellers/v6/freightestimate |
+
+复杂嵌套参数（`lines`/`ship_to_info`/`end_user_info`/`reseller_info`/`shipment_details`/`additional_attributes`/`products`/`returns`等）以 `dict`/`list[dict]` 形式传入，具体字段见每个工具自己的参数说明（已对照官方 OpenAPI spec 核实字段名）。
+
+`ingrammicro_search_quotes`/`ingrammicro_create_quote`/`ingrammicro_get_freight_estimate` 额外要求一个 `requester_email` 参数（对应上游 `IM-CustomerContact`/`CustomerContact`：发起请求的登录用户邮箱）——这是调用方个人身份信息，不是租户级凭据，所以做成工具参数而不是网关 Header。
 
 ## 测试示例
 
@@ -154,14 +213,14 @@ curl -X POST http://localhost:8080/mcp \
 - Official OpenAPI 3.0 spec (source of truth used for this build): https://github.com/ingrammicro-xvantage/xi-sdk-openapispec/blob/main/openapispec/unified/XI-Resellers-API-Spec.json
 - Reseller API documentation portal: https://developer.ingrammicro.com/reseller/api-documentation/orders
 - Getting started / account prerequisites: https://developer.ingrammicro.com/reseller/getting-started/api-overview
-- Ingram Micro's own official MCP Server (query-only, complements this server): https://developer.ingrammicro.com/reseller/mcp-server
+- Ingram Micro's own official MCP Server (query-only; this server supersedes it for MSPbots' purposes — see above): https://developer.ingrammicro.com/reseller/mcp-server
 
 ## Known Gaps
 
 - **⚠️ Not yet verified against a real Ingram Micro account.** This build
   was written entirely from Ingram Micro's own published OpenAPI spec —
-  schema/tool count confirmed via the real MCP protocol (`tools/list`, 5
-  tools) and 17 unit tests passing, but no call has been exercised against
+  schema/tool count confirmed via the real MCP protocol (`tools/list`, 24
+  tools) and unit tests passing, but no call has been exercised against
   a real, credentialed Ingram Micro reseller account. Getting one requires
   an existing reseller relationship with sales history (see
   Authentication) — needs re-verification once real sandbox or production
@@ -173,16 +232,13 @@ curl -X POST http://localhost:8080/mcp \
   (`https://api.ingrammicro.com:443/`) labeled "Sandbox" with no `/sandbox`
   suffix. `INGRAMMICRO_BASE_URL` is fully overridable specifically so this
   can be corrected without a code change once confirmed.
-- **Scope is deliberately narrow — 5 tools, not a full port of the
-  Resellers API's 27 endpoints.** By design, to stay complementary to
-  Ingram Micro's own official MCP Server rather than duplicating it: this
-  server intentionally does NOT implement Product Catalog, Quotes
-  search/create, Order Search/Details/Estimate, Invoices, Renewals, Deals,
-  Returns, or Freight Estimate — the official MCP Server already covers
-  those (except Quote Create, which is out of scope here as documentation
-  rather than a purchasing action). Order **search/details** specifically
-  are covered by the official MCP Server's query tools; use that server to
-  check on an order this one created.
+- **`IM-ApplicationID` vs `IM-SenderID`**: Ingram's own spec documents
+  Invoices/Deals-details as requiring `IM-ApplicationID` while every other
+  endpoint documents the identical concept as `IM-SenderID`. Treated as a
+  spec-naming inconsistency rather than two different things — this
+  server sends both headers with the same configured sender id on every
+  call rather than guessing which name a given endpoint actually
+  validates.
 - **Webhooks (`Order Status`, `Stock Update`) are out of scope.** These
   are inbound push notifications Ingram Micro sends *to* a callback URL a
   reseller registers — not something an MCP tool (which the agent *calls*)
